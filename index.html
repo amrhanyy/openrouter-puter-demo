@@ -129,13 +129,6 @@
       });
     }
 
-    // Initialize script loading
-    loadPuterScript().catch(err => {
-      console.error('Script loading failed:', err);
-      document.getElementById('auth-status').textContent = 'Error: Puter.js failed to load. Please check your internet connection and try refreshing the page.';
-    });
-  </script>
-  <script>
     const $ = (id) => document.getElementById(id);
 
     // Wait for Puter.js to be fully loaded and ready
@@ -520,6 +513,13 @@
     document.addEventListener('DOMContentLoaded', async () => {
       $("auth-status").textContent = "Loading Puter.js...";
       try {
+        // Start loading Puter.js
+        await loadPuterScript();
+        
+        // Wait a moment for it to initialize
+        await new Promise(r => setTimeout(r, 1000));
+        
+        // Now try to initialize
         const isAuth = await initializePuter();
         if (isAuth) {
           $("auth-status").textContent = "Already authenticated!";
