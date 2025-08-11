@@ -44,6 +44,7 @@
           <button id="sign-out" style="background:#6b7280;">Sign out</button>
           <button id="force-reauth" style="background:#ef4444;">Force Re-auth</button>
           <button id="direct-auth" style="background:#10b981;">Direct Auth</button>
+          <button id="retry-load" style="background:#8b5cf6;">Retry Load</button>
         </div>
       </div>
       <div id="auth-status" class="output" style="margin-top:10px;"></div>
@@ -99,21 +100,55 @@
     <div class="footer">Powered by Puter.js v2 and OpenRouter models.</div>
   </div>
 
-  <script src="https://js.puter.com/v2/"></script>
+  <script>
+    // Load Puter.js with fallbacks and better error handling
+    function loadPuterScript() {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://js.puter.com/v2/';
+        script.onload = () => {
+          console.log('Puter.js loaded successfully');
+          resolve();
+        };
+        script.onerror = () => {
+          console.error('Failed to load Puter.js from primary CDN');
+          // Try alternative CDN
+          const script2 = document.createElement('script');
+          script2.src = 'https://cdn.puter.com/puter.js';
+          script2.onload = () => {
+            console.log('Puter.js loaded from alternative CDN');
+            resolve();
+          };
+          script2.onerror = () => {
+            console.error('Failed to load Puter.js from alternative CDN');
+            reject(new Error('Puter.js failed to load from all sources'));
+          };
+          document.head.appendChild(script2);
+        };
+        document.head.appendChild(script);
+      });
+    }
+
+    // Initialize script loading
+    loadPuterScript().catch(err => {
+      console.error('Script loading failed:', err);
+      document.getElementById('auth-status').textContent = 'Error: Puter.js failed to load. Please check your internet connection and try refreshing the page.';
+    });
+  </script>
   <script>
     const $ = (id) => document.getElementById(id);
 
     // Wait for Puter.js to be fully loaded and ready
     async function waitForPuter() {
       let attempts = 0;
-      while (attempts < 50) { // Wait up to 5 seconds
+      while (attempts < 100) { // Wait up to 10 seconds
         if (window.puter && typeof puter.whoami === 'function') {
           return true;
         }
         await new Promise(r => setTimeout(r, 100));
         attempts++;
       }
-      throw new Error('Puter.js failed to load');
+      throw new Error('Puter.js failed to load or initialize properly');
     }
 
     // Initialize Puter and check if we're already authenticated
@@ -483,13 +518,42 @@
 
     // Initialize Puter when the page loads
     document.addEventListener('DOMContentLoaded', async () => {
+      $("auth-status").textContent = "Loading Puter.js...";
       try {
         const isAuth = await initializePuter();
         if (isAuth) {
           $("auth-status").textContent = "Already authenticated!";
+        } else {
+          $("auth-status").textContent = "Puter.js loaded. Not authenticated. Use buttons above to sign in.";
         }
       } catch (err) {
         console.error('Initialization failed:', err);
+        $("auth-status").textContent = `Initialization failed: ${err.message}. Click 'Retry Load' to try again.`;
+      }
+    });
+
+    // Retry loading Puter.js
+    $("retry-load")?.addEventListener("click", async () => {
+      const out = $("auth-status");
+      out.textContent = "Retrying Puter.js load...";
+      try {
+        // Remove existing script tags
+        const existingScripts = document.querySelectorAll('script[src*="puter"]');
+        existingScripts.forEach(script => script.remove());
+        
+        // Reload the script
+        await loadPuterScript();
+        
+        // Wait and try to initialize
+        await new Promise(r => setTimeout(r, 2000));
+        const isAuth = await initializePuter();
+        if (isAuth) {
+          out.textContent = "Successfully loaded and authenticated!";
+        } else {
+          out.textContent = "Successfully loaded Puter.js. Not authenticated. Use buttons above to sign in.";
+        }
+      } catch (err) {
+        out.textContent = `Retry failed: ${err.message}`;
       }
     });
   </script>
