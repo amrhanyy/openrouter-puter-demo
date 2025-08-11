@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Puter.js + OpenRouter Examples</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f7f7fb; color: #222; }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { margin-bottom: 8px; }
+    .muted { color: #666; margin-top: 0; }
+    .card { background: #fff; border: 1px solid #e8e8ef; border-radius: 10px; padding: 16px; margin-top: 16px; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    select, textarea, input[type="text"] { width: 100%; max-width: 100%; box-sizing: border-box; }
+    textarea { resize: vertical; }
+    button { background: #3b82f6; color: white; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+    button[disabled] { opacity: 0.6; cursor: not-allowed; }
+    .output { white-space: pre-wrap; border: 1px solid #e8e8ef; border-radius: 8px; padding: 12px; min-height: 120px; background: #fafafe; }
+    .loading { color: #3b82f6; }
+    .section-title { margin: 0 0 8px 0; font-size: 18px; }
+    .footer { margin-top: 24px; font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>OpenRouter via Puter.js</h1>
+    <p class="muted">Free, serverless access to many AI models. No backend or API keys required.</p>
+
+    <div class="card" style="background:#eef6ff;border-color:#cfe3ff;">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <strong>Having trouble with a blank auth popup?</strong>
+          <div class="muted" style="margin-top:4px;">Sign in to Puter in a new tab, then return here. Also allow pop-ups and third‑party cookies for puter.com.</div>
+        </div>
+        <button id="sign-in-puter" style="background:#2563eb;">Sign in to Puter</button>
+      </div>
+    </div>
+
+    <div class="card" id="debug-auth">
+      <div class="row" style="justify-content: space-between;">
+        <h2 class="section-title">Auth Debug</h2>
+        <div class="row">
+          <button id="check-auth">Check Auth</button>
+          <button id="sign-out" style="background:#6b7280;">Sign out</button>
+          <button id="force-reauth" style="background:#ef4444;">Force Re-auth</button>
+        </div>
+      </div>
+      <div id="auth-status" class="output" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card" id="example-1">
+      <div class="row" style="justify-content: space-between;">
+        <h2 class="section-title">Example 1 — Basic Text Generation (Llama 3.1 8B)</h2>
+        <button id="ex1-run">Run</button>
+      </div>
+      <div class="row" style="gap: 0;">
+        <textarea id="ex1-prompt" rows="3">Explain quantum computing in simple terms</textarea>
+      </div>
+      <div id="ex1-loading" class="loading" style="display:none; margin-top:8px;">Generating…</div>
+      <div id="ex1-output" class="output" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card" id="example-2">
+      <div class="row" style="justify-content: space-between;">
+        <h2 class="section-title">Example 2 — Streaming (Claude Sonnet 4)</h2>
+        <button id="ex2-run">Stream</button>
+      </div>
+      <div class="row" style="gap: 0;">
+        <textarea id="ex2-prompt" rows="3">Write a short story about a robot that discovers emotions</textarea>
+      </div>
+      <div id="ex2-loading" class="loading" style="display:none; margin-top:8px;">Streaming…</div>
+      <div id="ex2-output" class="output" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card" id="example-3">
+      <h2 class="section-title">Example 3 — Model Selection Interface</h2>
+      <div class="row">
+        <select id="model-select" style="padding: 8px; min-width: 280px;">
+          <option value="openrouter:meta-llama/llama-3.1-8b-instruct">Meta Llama 3.1 (8B)</option>
+          <option value="openrouter:anthropic/claude-3.5-sonnet">Anthropic Claude 3.5 Sonnet</option>
+          <option value="openrouter:anthropic/claude-sonnet-4">Anthropic Claude Sonnet 4</option>
+          <option value="openrouter:mistralai/mistral-7b-instruct">Mistral 7B</option>
+          <option value="openrouter:google/gemini-pro-1.5">Google Gemini Pro 1.5</option>
+          <option value="openrouter:openai/gpt-4o-mini">OpenAI GPT-4o Mini</option>
+        </select>
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="stream-toggle" /> Stream
+        </label>
+        <button id="ex3-run">Generate</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <textarea id="ex3-prompt" rows="4" placeholder="Enter your prompt here…">Explain how solar panels work.</textarea>
+      </div>
+      <div id="ex3-loading" class="loading" style="display:none; margin-top:8px;">Generating…</div>
+      <div id="ex3-output" class="output" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="footer">Powered by Puter.js v2 and OpenRouter models.</div>
+  </div>
+
+  <script src="https://js.puter.com/v2/"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    // Utility: open Puter auth popup and resolve when closed (or after timeout)
+    async function openPuterAuthPopup() {
+      const authUrl = "https://puter.com/?embedded_in_popup=true&request_auth=true";
+      const win = window.open(authUrl, "puter_auth", "popup,width=520,height=720");
+      return new Promise((resolve) => {
+        if (!win) {
+          resolve(false);
+          return;
+        }
+        let elapsedMs = 0;
+        const pollMs = 500;
+        const timer = setInterval(() => {
+          if (win.closed) {
+            clearInterval(timer);
+            resolve(true);
+          }
+          elapsedMs += pollMs;
+          if (elapsedMs >= 90_000) { // safety timeout 90s
+            try { win.close(); } catch (_) {}
+            clearInterval(timer);
+            resolve(true);
+          }
+        }, pollMs);
+      });
+    }
+
+    // Ensure we are authenticated with Puter before making API calls
+    async function ensurePuterAuth() {
+      try {
+        // If already signed in, whoami will succeed
+        await puter.whoami();
+        return true;
+      } catch (_) {
+        // Try built-in auth if available
+        try {
+          if (puter?.auth?.requestAuth) {
+            await puter.auth.requestAuth({ inPopup: true });
+          } else if (puter?.auth?.signIn) {
+            await puter.auth.signIn({ inPopup: true });
+          } else {
+            await openPuterAuthPopup();
+          }
+        } catch (_) {
+          await openPuterAuthPopup();
+        }
+        // Poll whoami for up to 10 seconds to wait for token propagation
+        const start = Date.now();
+        while (Date.now() - start < 10_000) {
+          try {
+            await puter.whoami();
+            return true;
+          } catch (err) {
+            await new Promise(r => setTimeout(r, 700));
+          }
+        }
+        // One more attempt: reset and force auth
+        try { puter.resetAuthToken?.(); } catch(_) {}
+        try {
+          if (puter?.auth?.requestAuth) {
+            await puter.auth.requestAuth({ inPopup: true, force: true });
+          } else if (puter?.auth?.signIn) {
+            await puter.auth.signIn({ inPopup: true, force: true });
+          } else {
+            await openPuterAuthPopup();
+          }
+        } catch (_) {}
+        const start2 = Date.now();
+        while (Date.now() - start2 < 10_000) {
+          try {
+            await puter.whoami();
+            return true;
+          } catch (err) {
+            await new Promise(r => setTimeout(r, 700));
+          }
+        }
+        return false;
+      }
+    }
+
+    function looksLikeAuthError(err) {
+      const msg = (err && (err.message || String(err)) || "").toLowerCase();
+      return msg.includes("auth") || msg.includes("authorize") || msg.includes("unauthorized") || msg.includes("login");
+    }
+
+    async function withAuthRetry(runFn) {
+      try {
+        return await runFn();
+      } catch (err) {
+        if (!looksLikeAuthError(err)) throw err;
+        await openPuterAuthPopup();
+        await new Promise(r => setTimeout(r, 600));
+        // retry once
+        return await runFn();
+      }
+    }
+
+    // Open Puter in a new tab so the user can complete sign-in if the popup is blocked/blank
+    $("sign-in-puter")?.addEventListener("click", async () => {
+      try {
+        if (puter?.auth?.signIn) {
+          await puter.auth.signIn({ inPopup: true });
+          return;
+        }
+      } catch (_) {
+        // fall through to tab open
+      }
+      const url = "https://puter.com/?request_auth=true";
+      window.open(url, "_blank");
+    });
+
+    // Debug: check current auth state
+    $("check-auth")?.addEventListener("click", async () => {
+      const out = $("auth-status");
+      out.textContent = "Checking…";
+      try {
+        const me = await puter.whoami();
+        out.textContent = JSON.stringify(me, null, 2);
+      } catch (e) {
+        out.textContent = `whoami error: ${e?.message || e}`;
+      }
+    });
+
+    // Sign out helper if available
+    $("sign-out")?.addEventListener("click", async () => {
+      try {
+        if (puter?.auth?.signOut) {
+          await puter.auth.signOut();
+        }
+      } finally {
+        location.reload();
+      }
+    });
+
+    // Force re-auth: reset token then sign in
+    $("force-reauth")?.addEventListener("click", async () => {
+      const out = $("auth-status");
+      out.textContent = "Resetting token and requesting auth…";
+      try { puter.resetAuthToken?.(); } catch(_) {}
+      try {
+        if (puter?.auth?.signIn) {
+          await puter.auth.signIn({ inPopup: true, force: true });
+        } else if (puter?.auth?.requestAuth) {
+          await puter.auth.requestAuth({ inPopup: true, force: true });
+        } else {
+          await openPuterAuthPopup();
+        }
+        // verify
+        const ok = await ensurePuterAuth();
+        out.textContent = ok ? "Authenticated." : "Still not authenticated (token missing).";
+      } catch (e) {
+        out.textContent = `force re-auth error: ${e?.message || e}`;
+      }
+    });
+
+    // Example 1
+    $("ex1-run").addEventListener("click", async () => {
+      const prompt = $("ex1-prompt").value.trim();
+      if (!prompt) return;
+      $("ex1-output").textContent = "";
+      $("ex1-loading").style.display = "block";
+      $("ex1-run").disabled = true;
+      try {
+        await ensurePuterAuth();
+        const response = await withAuthRetry(() =>
+          puter.ai.chat(prompt, { model: 'openrouter:meta-llama/llama-3.1-8b-instruct' })
+        );
+        $("ex1-output").textContent = typeof response === 'string' ? response : String(response);
+      } catch (e) {
+        $("ex1-output").textContent = `Error: ${e?.message || e}`;
+      } finally {
+        $("ex1-loading").style.display = "none";
+        $("ex1-run").disabled = false;
+      }
+    });
+
+    // Example 2 (Streaming)
+    $("ex2-run").addEventListener("click", async () => {
+      const prompt = $("ex2-prompt").value.trim();
+      if (!prompt) return;
+      const out = $("ex2-output");
+      out.textContent = "";
+      $("ex2-loading").style.display = "block";
+      $("ex2-run").disabled = true;
+      try {
+        await ensurePuterAuth();
+        const stream = await withAuthRetry(() =>
+          puter.ai.chat(prompt, { model: 'openrouter:anthropic/claude-sonnet-4', stream: true })
+        );
+        for await (const part of stream) {
+          if (part?.text) {
+            out.textContent += part.text;
+          }
+        }
+      } catch (e) {
+        out.textContent = `Error: ${e?.message || e}`;
+      } finally {
+        $("ex2-loading").style.display = "none";
+        $("ex2-run").disabled = false;
+      }
+    });
+
+    // Example 3 (Model selection, optional streaming)
+    $("ex3-run").addEventListener("click", async () => {
+      const model = $("model-select").value;
+      const prompt = $("ex3-prompt").value.trim();
+      const shouldStream = $("stream-toggle").checked;
+      if (!prompt) return;
+      const out = $("ex3-output");
+      out.textContent = "";
+      $("ex3-loading").style.display = "block";
+      $("ex3-run").disabled = true;
+      try {
+        await ensurePuterAuth();
+        if (shouldStream) {
+          const stream = await withAuthRetry(() =>
+            puter.ai.chat(prompt, { model, stream: true })
+          );
+          for await (const part of stream) {
+            if (part?.text) {
+              out.textContent += part.text;
+            }
+          }
+        } else {
+          const response = await withAuthRetry(() =>
+            puter.ai.chat(prompt, { model })
+          );
+          out.textContent = typeof response === 'string' ? response : String(response);
+        }
+      } catch (e) {
+        out.textContent = `Error: ${e?.message || e}`;
+      } finally {
+        $("ex3-loading").style.display = "none";
+        $("ex3-run").disabled = false;
+      }
+    });
+  </script>
+</body>
+</html> 
