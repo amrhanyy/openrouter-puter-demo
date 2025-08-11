@@ -43,6 +43,7 @@
           <button id="check-auth">Check Auth</button>
           <button id="sign-out" style="background:#6b7280;">Sign out</button>
           <button id="force-reauth" style="background:#ef4444;">Force Re-auth</button>
+          <button id="direct-auth" style="background:#10b981;">Direct Auth</button>
         </div>
       </div>
       <div id="auth-status" class="output" style="margin-top:10px;"></div>
@@ -102,25 +103,78 @@
   <script>
     const $ = (id) => document.getElementById(id);
 
+    // Wait for Puter.js to be fully loaded and ready
+    async function waitForPuter() {
+      let attempts = 0;
+      while (attempts < 50) { // Wait up to 5 seconds
+        if (window.puter && typeof puter.whoami === 'function') {
+          return true;
+        }
+        await new Promise(r => setTimeout(r, 100));
+        attempts++;
+      }
+      throw new Error('Puter.js failed to load');
+    }
+
+    // Initialize Puter and check if we're already authenticated
+    async function initializePuter() {
+      try {
+        await waitForPuter();
+        // Check if we already have a valid session
+        try {
+          const me = await puter.whoami();
+          console.log('Already authenticated:', me);
+          return true;
+        } catch (err) {
+          console.log('Not authenticated, will need to sign in');
+          return false;
+        }
+      } catch (err) {
+        console.error('Failed to initialize Puter:', err);
+        return false;
+      }
+    }
+
     // Utility: open Puter auth popup and resolve when closed (or after timeout)
     async function openPuterAuthPopup() {
       const authUrl = "https://puter.com/?embedded_in_popup=true&request_auth=true";
-      const win = window.open(authUrl, "puter_auth", "popup,width=520,height=720");
+      let win;
+      try {
+        win = window.open(authUrl, "puter_auth", "popup,width=520,height=720");
+      } catch (err) {
+        console.error('Failed to open popup:', err);
+        return false;
+      }
+
+      if (!win) {
+        console.log('Popup blocked, falling back to tab method');
+        return false;
+      }
+
       return new Promise((resolve) => {
-        if (!win) {
-          resolve(false);
-          return;
-        }
         let elapsedMs = 0;
         const pollMs = 500;
         const timer = setInterval(() => {
-          if (win.closed) {
+          try {
+            if (!win || win.closed) {
+              clearInterval(timer);
+              resolve(true);
+              return;
+            }
+          } catch (err) {
+            // Window reference might be invalid
+            console.log('Window reference invalid, assuming closed');
             clearInterval(timer);
             resolve(true);
+            return;
           }
           elapsedMs += pollMs;
           if (elapsedMs >= 90_000) { // safety timeout 90s
-            try { win.close(); } catch (_) {}
+            try { 
+              if (win && !win.closed) {
+                win.close(); 
+              }
+            } catch (_) {}
             clearInterval(timer);
             resolve(true);
           }
@@ -130,6 +184,9 @@
 
     // Ensure we are authenticated with Puter before making API calls
     async function ensurePuterAuth() {
+      // First, make sure Puter is initialized
+      await waitForPuter();
+
       try {
         // If already signed in, whoami will succeed
         await puter.whoami();
@@ -138,9 +195,19 @@
         // Try built-in auth if available
         try {
           if (puter?.auth?.requestAuth) {
-            await puter.auth.requestAuth({ inPopup: true });
+            try {
+              await puter.auth.requestAuth({ inPopup: true });
+            } catch (popupErr) {
+              console.log('Popup auth failed, trying without popup:', popupErr);
+              await puter.auth.requestAuth();
+            }
           } else if (puter?.auth?.signIn) {
-            await puter.auth.signIn({ inPopup: true });
+            try {
+              await puter.auth.signIn({ inPopup: true });
+            } catch (popupErr) {
+              console.log('Popup auth failed, trying without popup:', popupErr);
+              await puter.auth.signIn();
+            }
           } else {
             await openPuterAuthPopup();
           }
@@ -161,9 +228,17 @@
         try { puter.resetAuthToken?.(); } catch(_) {}
         try {
           if (puter?.auth?.requestAuth) {
-            await puter.auth.requestAuth({ inPopup: true, force: true });
+            try {
+              await puter.auth.requestAuth({ inPopup: true, force: true });
+            } catch (popupErr) {
+              await puter.auth.requestAuth({ force: true });
+            }
           } else if (puter?.auth?.signIn) {
-            await puter.auth.signIn({ inPopup: true, force: true });
+            try {
+              await puter.auth.signIn({ inPopup: true, force: true });
+            } catch (popupErr) {
+              await puter.auth.signIn({ force: true });
+            }
           } else {
             await openPuterAuthPopup();
           }
@@ -201,22 +276,68 @@
     // Open Puter in a new tab so the user can complete sign-in if the popup is blocked/blank
     $("sign-in-puter")?.addEventListener("click", async () => {
       try {
+        await waitForPuter();
         if (puter?.auth?.signIn) {
-          await puter.auth.signIn({ inPopup: true });
-          return;
+          try {
+            await puter.auth.signIn({ inPopup: true });
+          } catch (popupErr) {
+            console.log('Popup signIn failed, trying without popup:', popupErr);
+            await puter.auth.signIn();
+          }
+          // Wait a moment then check if it worked
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            await puter.whoami();
+            $("auth-status").textContent = "Successfully signed in!";
+            return;
+          } catch (err) {
+            console.log('Popup auth may have failed, trying tab method');
+          }
         }
       } catch (_) {
         // fall through to tab open
       }
+      // Fallback: open in new tab
       const url = "https://puter.com/?request_auth=true";
       window.open(url, "_blank");
+      $("auth-status").textContent = "Opened Puter in new tab. Please sign in there, then return here and click 'Check Auth'.";
     });
+
+    // Alternative: direct Puter auth without popup
+    async function directPuterAuth() {
+      try {
+        await waitForPuter();
+        // Try to trigger auth flow directly
+        if (puter?.auth?.requestAuth) {
+          try {
+            await puter.auth.requestAuth();
+          } catch (err) {
+            console.log('requestAuth failed, trying signIn:', err);
+            if (puter?.auth?.signIn) {
+              await puter.auth.signIn();
+            } else {
+              throw err;
+            }
+          }
+        } else if (puter?.auth?.signIn) {
+          await puter.auth.signIn();
+        } else {
+          // Last resort: redirect to Puter
+          window.location.href = "https://puter.com/?request_auth=true";
+        }
+      } catch (err) {
+        console.error('Direct auth failed:', err);
+        // Fallback to redirect
+        window.location.href = "https://puter.com/?request_auth=true";
+      }
+    }
 
     // Debug: check current auth state
     $("check-auth")?.addEventListener("click", async () => {
       const out = $("auth-status");
       out.textContent = "Checking…";
       try {
+        await waitForPuter();
         const me = await puter.whoami();
         out.textContent = JSON.stringify(me, null, 2);
       } catch (e) {
@@ -227,6 +348,7 @@
     // Sign out helper if available
     $("sign-out")?.addEventListener("click", async () => {
       try {
+        await waitForPuter();
         if (puter?.auth?.signOut) {
           await puter.auth.signOut();
         }
@@ -239,12 +361,21 @@
     $("force-reauth")?.addEventListener("click", async () => {
       const out = $("auth-status");
       out.textContent = "Resetting token and requesting auth…";
+      await waitForPuter();
       try { puter.resetAuthToken?.(); } catch(_) {}
       try {
         if (puter?.auth?.signIn) {
-          await puter.auth.signIn({ inPopup: true, force: true });
+          try {
+            await puter.auth.signIn({ inPopup: true, force: true });
+          } catch (popupErr) {
+            await puter.auth.signIn({ force: true });
+          }
         } else if (puter?.auth?.requestAuth) {
-          await puter.auth.requestAuth({ inPopup: true, force: true });
+          try {
+            await puter.auth.requestAuth({ inPopup: true, force: true });
+          } catch (popupErr) {
+            await puter.auth.requestAuth({ force: true });
+          }
         } else {
           await openPuterAuthPopup();
         }
@@ -253,6 +384,18 @@
         out.textContent = ok ? "Authenticated." : "Still not authenticated (token missing).";
       } catch (e) {
         out.textContent = `force re-auth error: ${e?.message || e}`;
+      }
+    });
+
+    // Direct auth button
+    $("direct-auth")?.addEventListener("click", async () => {
+      const out = $("auth-status");
+      out.textContent = "Attempting direct authentication...";
+      try {
+        await directPuterAuth();
+        out.textContent = "Direct auth initiated. Check the console for any errors.";
+      } catch (e) {
+        out.textContent = `Direct auth error: ${e?.message || e}`;
       }
     });
 
@@ -335,6 +478,18 @@
       } finally {
         $("ex3-loading").style.display = "none";
         $("ex3-run").disabled = false;
+      }
+    });
+
+    // Initialize Puter when the page loads
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const isAuth = await initializePuter();
+        if (isAuth) {
+          $("auth-status").textContent = "Already authenticated!";
+        }
+      } catch (err) {
+        console.error('Initialization failed:', err);
       }
     });
   </script>
