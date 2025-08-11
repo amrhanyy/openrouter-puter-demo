@@ -135,11 +135,15 @@
     async function waitForPuter() {
       let attempts = 0;
       while (attempts < 100) { // Wait up to 10 seconds
-        if (window.puter && typeof puter.whoami === 'function') {
+        if (window.puter && typeof puter.whoami === 'function' && puter.authToken) {
           return true;
         }
         await new Promise(r => setTimeout(r, 100));
         attempts++;
+      }
+      // Check if Puter.js loaded but we're just not authenticated
+      if (window.puter && typeof puter.whoami === 'function') {
+        return 'loaded_not_auth';
       }
       throw new Error('Puter.js failed to load or initialize properly');
     }
@@ -147,14 +151,20 @@
     // Initialize Puter and check if we're already authenticated
     async function initializePuter() {
       try {
-        await waitForPuter();
+        const status = await waitForPuter();
+        
+        if (status === 'loaded_not_auth') {
+          console.log('Puter.js loaded but not authenticated');
+          return false;
+        }
+        
         // Check if we already have a valid session
         try {
           const me = await puter.whoami();
           console.log('Already authenticated:', me);
           return true;
         } catch (err) {
-          console.log('Not authenticated, will need to sign in');
+          console.log('whoami failed, not authenticated:', err.message);
           return false;
         }
       } catch (err) {
@@ -213,7 +223,12 @@
     // Ensure we are authenticated with Puter before making API calls
     async function ensurePuterAuth() {
       // First, make sure Puter is initialized
-      await waitForPuter();
+      const status = await waitForPuter();
+      
+      if (status === 'loaded_not_auth') {
+        // Puter is loaded but we need to authenticate
+        console.log('Puter loaded, proceeding to auth flow');
+      }
 
       try {
         // If already signed in, whoami will succeed
@@ -524,11 +539,15 @@
         if (isAuth) {
           $("auth-status").textContent = "Already authenticated!";
         } else {
-          $("auth-status").textContent = "Puter.js loaded. Not authenticated. Use buttons above to sign in.";
+          $("auth-status").textContent = "Puter.js loaded successfully! Not authenticated. Use the buttons above to sign in.";
         }
       } catch (err) {
         console.error('Initialization failed:', err);
-        $("auth-status").textContent = `Initialization failed: ${err.message}. Click 'Retry Load' to try again.`;
+        if (err.message.includes('failed to load')) {
+          $("auth-status").textContent = `Initialization failed: ${err.message}. Click 'Retry Load' to try again.`;
+        } else {
+          $("auth-status").textContent = `Puter.js loaded but initialization failed: ${err.message}. Try using the auth buttons above.`;
+        }
       }
     });
 
